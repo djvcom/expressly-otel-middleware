@@ -4,7 +4,7 @@ import { Router } from "@fastly/expressly"
 
 const router = new Router();
 
-router.get("/", async (req, res) => {
+router.get("/", async (_req, res) => {
   return res.send("Hello world!");
 });
 
