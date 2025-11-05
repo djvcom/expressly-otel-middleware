@@ -11,6 +11,11 @@ service_id = ""
 
 [local_server]
 
+[local_server.backends]
+
+[local_server.backends.otlp-collector]
+  url = "http://localhost:4318"
+
 [scripts]
-  build = "npm run build"
-  post_init = "npm install"
+  build = "yarn build"
+  post_init = "yarn"

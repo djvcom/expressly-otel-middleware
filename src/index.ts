@@ -1,11 +1,34 @@
 /// <reference types="@fastly/js-compute" />
 
-import { Router } from "@fastly/expressly"
+import { allowDynamicBackends } from 'fastly:experimental';
+import { Router } from '@fastly/expressly';
+import { trace } from '@opentelemetry/api';
+import './telemetry.js';
 
-const router = new Router();
+allowDynamicBackends(true);
 
-router.get("/", async (_req, res) => {
-  return res.send("Hello world!");
+const tracer = trace.getTracer('my-handler');
+
+export const router = new Router();
+
+router.get('/', async (_req, res) => {
+  return res.send('Hello world!');
 });
+
+router.get('/trace', async (_req, res) =>
+  tracer.startActiveSpan('thing', async (span) => {
+    try {
+      res.text('Trace sent!');
+    } catch (error) {
+      if (typeof error === 'string' || error instanceof Error) {
+        span.recordException(error);
+      } else {
+        span.recordException(JSON.stringify(error));
+      }
+    } finally {
+      span.end();
+    }
+  }),
+);
 
 router.listen();
