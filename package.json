@@ -2,6 +2,8 @@
   "type": "module",
   "private": true,
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.925.0",
+    "@aws-sdk/lib-dynamodb": "^3.925.0",
     "@fastly/compute-js-opentelemetry": "^0.4.3",
     "@fastly/expressly": "^2.3.0",
     "@fastly/js-compute": "^3.33.2",
@@ -18,6 +20,7 @@
     "@mswjs/http-middleware": "^0.10.3",
     "@types/express": "^5.0.5",
     "@vitest/ui": "^4.0.7",
+    "aws-sdk-client-mock": "^4.1.0",
     "express": "^5.1.0",
     "msw": "^2.12.0",
     "typescript": "^5.2.2",
