@@ -17,7 +17,7 @@ let docClient: DynamoDBDocumentClient | null = null;
 function getDynamoDBClient() {
   if (!docClient) {
     const client = new DynamoDBClient({
-      region: 'us-east-1',
+      region: 'eu-west-1',
       endpoint: 'http://localhost:8000',
       credentials: {
         accessKeyId: 'test',
@@ -38,8 +38,9 @@ router.get('/', async (_req, res) => {
 });
 
 router.get('/trace', async (_req, res) =>
-  tracer.startActiveSpan('thing', async (span) => {
+  tracer.startActiveSpan('custom-operation', async span => {
     try {
+      await fetch('http://localhost:9000/get');
       res.text('Trace sent!');
     } catch (error) {
       if (typeof error === 'string' || error instanceof Error) {

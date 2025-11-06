@@ -3,34 +3,72 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ComputeApplication } from '@fastly/compute-testing';
 import { createMiddleware } from '@mswjs/http-middleware';
+import type {
+  IExportTraceServiceRequest,
+  ISpan,
+} from '@opentelemetry/otlp-transformer';
 import express from 'express';
 import { HttpResponse, http } from 'msw';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function getSpanAttributes(
+  span: ISpan,
+): Record<string, string | number | undefined> {
+  return span.attributes.reduce(
+    (acc, attr) => {
+      acc[attr.key] =
+        attr.value.stringValue ?? attr.value.intValue ?? undefined;
+      return acc;
+    },
+    {} as Record<string, string | number | undefined>,
+  );
+}
+
+function getAllSpans(requests: IExportTraceServiceRequest[]): ISpan[] {
+  return requests.flatMap(req =>
+    req.resourceSpans![0].scopeSpans.flatMap(ss => ss.spans ?? []),
+  );
+}
+
 const COLLECTOR_URL = 'http://localhost:4318/v1/traces';
 
 describe('Basic Routing', () => {
   const app = new ComputeApplication();
-  let receivedRequests: unknown[] = [];
-  let mockServer: Server;
+  let receivedRequests: IExportTraceServiceRequest[] = [];
+  let otelServer: Server;
+  let httpbinServer: Server;
 
-  const handlers = [
+  const otelHandlers = [
     http.post(COLLECTOR_URL, async ({ request }) => {
-      const body = await request.json();
+      const body = (await request.json()) as IExportTraceServiceRequest;
       receivedRequests.push(body);
       return HttpResponse.json({ partialSuccess: {} });
     }),
   ];
 
-  beforeAll(async () => {
-    const expressApp = express();
-    const middleware = createMiddleware(...handlers);
-    expressApp.use(middleware);
+  const httpbinHandlers = [
+    http.get('http://localhost:9000/get', () => {
+      return HttpResponse.json({ success: true });
+    }),
+  ];
 
-    await new Promise<void>((resolve) => {
-      mockServer = expressApp.listen(4318, () => resolve());
+  beforeAll(async () => {
+    const otelApp = express();
+    const otelMiddleware = createMiddleware(...otelHandlers);
+    otelApp.use(otelMiddleware);
+
+    const httpbinApp = express();
+    const httpbinMiddleware = createMiddleware(...httpbinHandlers);
+    httpbinApp.use(httpbinMiddleware);
+
+    await new Promise<void>(resolve => {
+      otelServer = otelApp.listen(4318, () => resolve());
+    });
+
+    await new Promise<void>(resolve => {
+      httpbinServer = httpbinApp.listen(9000, () => resolve());
     });
 
     await app.start({
@@ -44,8 +82,11 @@ describe('Basic Routing', () => {
 
   afterAll(async () => {
     await app.shutdown();
-    await new Promise<void>((resolve) => {
-      mockServer.close(() => resolve());
+    await new Promise<void>(resolve => {
+      otelServer.close(() => resolve());
+    });
+    await new Promise<void>(resolve => {
+      httpbinServer.close(() => resolve());
     });
   });
 
@@ -66,22 +107,17 @@ describe('Basic Routing', () => {
     const response = await app.fetch('/');
     expect(response.status).toBe(200);
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     expect(receivedRequests.length).toBeGreaterThan(0);
 
-    const allSpans = receivedRequests.flatMap((req: any) =>
-      req.resourceSpans[0].scopeSpans.flatMap((ss: any) => ss.spans),
-    );
+    const allSpans = getAllSpans(receivedRequests);
 
-    const httpSpan = allSpans.find((s) => s.name === 'GET /');
+    const httpSpan = allSpans.find(s => s.name === 'GET /');
     expect(httpSpan).toBeDefined();
-    expect(httpSpan.kind).toBe(2);
+    expect(httpSpan?.kind).toBe(2);
 
-    const attributes = httpSpan.attributes.reduce((acc: any, attr: any) => {
-      acc[attr.key] = attr.value.stringValue ?? attr.value.intValue;
-      return acc;
-    }, {});
+    const attributes = getSpanAttributes(httpSpan!);
 
     expect(attributes['http.request.method']).toBe('GET');
     expect(attributes['http.response.status_code']).toBe(200);
@@ -104,23 +140,18 @@ describe('Basic Routing', () => {
     const response = await app.fetch('/error');
     expect(response.status).toBe(500);
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-    const allSpans = receivedRequests.flatMap((req: any) =>
-      req.resourceSpans[0].scopeSpans.flatMap((ss: any) => ss.spans),
-    );
+    const allSpans = getAllSpans(receivedRequests);
 
-    const errorSpan = allSpans.find((s) => s.name === 'GET /error');
+    const errorSpan = allSpans.find(s => s.name === 'GET /error');
     expect(errorSpan).toBeDefined();
 
-    const attributes = errorSpan.attributes.reduce((acc: any, attr: any) => {
-      acc[attr.key] = attr.value.stringValue ?? attr.value.intValue;
-      return acc;
-    }, {});
+    const attributes = getSpanAttributes(errorSpan!);
 
     expect(attributes['http.response.status_code']).toBe(500);
     expect(attributes['error.type']).toBe('500');
-    expect(errorSpan.status.code).toBe(2);
+    expect(errorSpan?.status.code).toBe(2);
   });
 
   it('should propagate trace context from incoming headers', async () => {
@@ -135,41 +166,82 @@ describe('Basic Routing', () => {
     });
     expect(response.status).toBe(200);
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-    const allSpans = receivedRequests.flatMap((req: any) =>
-      req.resourceSpans[0].scopeSpans.flatMap((ss: any) => ss.spans),
-    );
+    const allSpans = getAllSpans(receivedRequests);
 
-    const propagatedSpan = allSpans.find((s: any) => s.name === 'GET /');
+    const propagatedSpan = allSpans.find(s => s.name === 'GET /');
     expect(propagatedSpan).toBeDefined();
 
-    const spanTraceId = Buffer.from(propagatedSpan.traceId).toString('utf-8');
-    const spanParentSpanId = Buffer.from(propagatedSpan.parentSpanId).toString(
-      'utf-8',
-    );
+    const spanTraceId = Buffer.from(propagatedSpan!.traceId).toString('utf-8');
+    const spanParentSpanId = Buffer.from(
+      propagatedSpan!.parentSpanId!,
+    ).toString('utf-8');
 
     expect(spanTraceId).toBe(traceId);
     expect(spanParentSpanId).toBe(parentSpanId);
   });
+
+  it('should create parent-child span relationship for custom span with backend fetch', async () => {
+    const response = await app.fetch('/trace');
+    expect(response.status).toBe(200);
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const allSpans = getAllSpans(receivedRequests);
+
+    const customSpan = allSpans.find(s => s.name === 'custom-operation');
+    expect(customSpan).toBeDefined();
+
+    const backendFetchSpan = allSpans.find(s => s.name === 'Backend Fetch');
+    expect(backendFetchSpan).toBeDefined();
+
+    const customSpanId = Buffer.from(customSpan!.spanId).toString('hex');
+    const backendParentId = Buffer.from(
+      backendFetchSpan!.parentSpanId!,
+    ).toString('hex');
+
+    expect(backendParentId).toBe(customSpanId);
+
+    const customTraceId = Buffer.from(customSpan!.traceId).toString('hex');
+    const backendTraceId = Buffer.from(backendFetchSpan!.traceId).toString(
+      'hex',
+    );
+
+    expect(backendTraceId).toBe(customTraceId);
+  });
 });
+
+interface DynamoDBKey {
+  S?: string;
+  N?: string;
+}
+
+interface DynamoDBRequest {
+  TableName?: string;
+  Key?: Record<string, DynamoDBKey>;
+}
 
 describe('DynamoDB Integration', () => {
   const app = new ComputeApplication();
-  let receivedRequests: unknown[] = [];
-  let mockServer: Server;
+  let receivedRequests: IExportTraceServiceRequest[] = [];
+  let otelServer: Server;
+  let dynamoServer: Server;
 
-  const handlers = [
+  const otelHandlers = [
     http.post(COLLECTOR_URL, async ({ request }) => {
-      const body = await request.json();
+      const body = (await request.json()) as IExportTraceServiceRequest;
       receivedRequests.push(body);
       return HttpResponse.json({ partialSuccess: {} });
     }),
+  ];
+
+  const dynamoHandlers = [
     http.post('http://localhost:8000/', async ({ request }) => {
-      const body: any = await request.json();
+      const body = (await request.json()) as DynamoDBRequest;
 
       if (body.TableName === 'users' && body.Key) {
-        const userId = body.Key.id.S;
+        const userId = body.Key.id?.S;
 
         if (userId === 'user1') {
           return HttpResponse.json({
@@ -191,12 +263,20 @@ describe('DynamoDB Integration', () => {
   ];
 
   beforeAll(async () => {
-    const expressApp = express();
-    const middleware = createMiddleware(...handlers);
-    expressApp.use(middleware);
+    const otelApp = express();
+    const otelMiddleware = createMiddleware(...otelHandlers);
+    otelApp.use(otelMiddleware);
 
-    await new Promise<void>((resolve) => {
-      mockServer = expressApp.listen(8000, () => resolve());
+    const dynamoApp = express();
+    const dynamoMiddleware = createMiddleware(...dynamoHandlers);
+    dynamoApp.use(dynamoMiddleware);
+
+    await new Promise<void>(resolve => {
+      otelServer = otelApp.listen(4318, () => resolve());
+    });
+
+    await new Promise<void>(resolve => {
+      dynamoServer = dynamoApp.listen(8000, () => resolve());
     });
 
     await app.start({
@@ -210,8 +290,11 @@ describe('DynamoDB Integration', () => {
 
   afterAll(async () => {
     await app.shutdown();
-    await new Promise<void>((resolve) => {
-      mockServer.close(() => resolve());
+    await new Promise<void>(resolve => {
+      otelServer.close(() => resolve());
+    });
+    await new Promise<void>(resolve => {
+      dynamoServer.close(() => resolve());
     });
   });
 
@@ -229,5 +312,18 @@ describe('DynamoDB Integration', () => {
 
     const data = await response.json();
     expect(data).toEqual({ error: 'User not found' });
+  });
+
+  it('should create backend fetch spans for DynamoDB calls', async () => {
+    await app.fetch('/user/user1');
+    await app.fetch('/user/user999');
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const allSpans = getAllSpans(receivedRequests);
+
+    const backendFetchSpans = allSpans.filter(s => s.name === 'Backend Fetch');
+
+    expect(backendFetchSpans.length).toBeGreaterThan(0);
   });
 });

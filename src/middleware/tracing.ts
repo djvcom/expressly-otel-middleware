@@ -26,14 +26,9 @@ export async function tracingMiddleware(req: ERequest, res: EResponse) {
   const url = new URL(req.url);
   const pathname = url.pathname;
 
-  const carrier: Record<string, string> = {};
-  req.headers.forEach((value, key) => {
-    carrier[key] = value;
-  });
-
   const extractedContext = propagation.extract(
     context.active(),
-    carrier,
+    Object.fromEntries(req.headers),
     defaultTextMapGetter,
   );
 
@@ -71,7 +66,7 @@ export async function tracingMiddleware(req: ERequest, res: EResponse) {
   return context.with(ctx, () => {
     const originalSend = res.send.bind(res);
 
-    res.send = (body) => {
+    res.send = body => {
       const statusCode = res.status || 200;
       span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, statusCode);
 
