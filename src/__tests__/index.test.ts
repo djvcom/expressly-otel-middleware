@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import type { Server } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,9 +28,11 @@ function getSpanAttributes(
 }
 
 function getAllSpans(requests: IExportTraceServiceRequest[]): ISpan[] {
-  return requests.flatMap(req =>
-    req.resourceSpans![0].scopeSpans.flatMap(ss => ss.spans ?? []),
-  );
+  return requests.flatMap(req => {
+    const resourceSpan = req.resourceSpans?.[0];
+    if (!resourceSpan) return [];
+    return resourceSpan.scopeSpans.flatMap(ss => ss.spans ?? []);
+  });
 }
 
 const COLLECTOR_URL = 'http://localhost:4318/v1/traces';
@@ -114,10 +117,11 @@ describe('Basic Routing', () => {
     const allSpans = getAllSpans(receivedRequests);
 
     const httpSpan = allSpans.find(s => s.name === 'GET /');
-    expect(httpSpan).toBeDefined();
-    expect(httpSpan?.kind).toBe(2);
+    assert(httpSpan, 'httpSpan should be defined');
 
-    const attributes = getSpanAttributes(httpSpan!);
+    expect(httpSpan.kind).toBe(2);
+
+    const attributes = getSpanAttributes(httpSpan);
 
     expect(attributes['http.request.method']).toBe('GET');
     expect(attributes['http.response.status_code']).toBe(200);
@@ -145,13 +149,13 @@ describe('Basic Routing', () => {
     const allSpans = getAllSpans(receivedRequests);
 
     const errorSpan = allSpans.find(s => s.name === 'GET /error');
-    expect(errorSpan).toBeDefined();
+    assert(errorSpan, 'errorSpan should be defined');
 
-    const attributes = getSpanAttributes(errorSpan!);
+    const attributes = getSpanAttributes(errorSpan);
 
     expect(attributes['http.response.status_code']).toBe(500);
     expect(attributes['error.type']).toBe('500');
-    expect(errorSpan?.status.code).toBe(2);
+    expect(errorSpan.status.code).toBe(2);
   });
 
   it('should propagate trace context from incoming headers', async () => {
@@ -171,18 +175,19 @@ describe('Basic Routing', () => {
     const allSpans = getAllSpans(receivedRequests);
 
     const propagatedSpan = allSpans.find(s => s.name === 'GET /');
-    expect(propagatedSpan).toBeDefined();
+    assert(propagatedSpan, 'propagatedSpan should be defined');
+    assert(propagatedSpan.parentSpanId, 'parentSpanId should be defined');
 
-    const spanTraceId = Buffer.from(propagatedSpan!.traceId).toString('utf-8');
-    const spanParentSpanId = Buffer.from(
-      propagatedSpan!.parentSpanId!,
-    ).toString('utf-8');
+    const spanTraceId = Buffer.from(propagatedSpan.traceId).toString('utf-8');
+    const spanParentSpanId = Buffer.from(propagatedSpan.parentSpanId).toString(
+      'utf-8',
+    );
 
     expect(spanTraceId).toBe(traceId);
     expect(spanParentSpanId).toBe(parentSpanId);
   });
 
-  it('should create parent-child span relationship for custom span with backend fetch', async () => {
+  it('should create complete span hierarchy: route -> custom -> backend fetch', async () => {
     const response = await app.fetch('/trace');
     expect(response.status).toBe(200);
 
@@ -190,25 +195,41 @@ describe('Basic Routing', () => {
 
     const allSpans = getAllSpans(receivedRequests);
 
+    const routeSpan = allSpans.find(s => s.name === 'GET /trace');
+    assert(routeSpan, 'routeSpan should be defined');
+
     const customSpan = allSpans.find(s => s.name === 'custom-operation');
-    expect(customSpan).toBeDefined();
+    assert(customSpan, 'customSpan should be defined');
+    assert(
+      customSpan.parentSpanId,
+      'customSpan.parentSpanId should be defined',
+    );
 
     const backendFetchSpan = allSpans.find(s => s.name === 'Backend Fetch');
-    expect(backendFetchSpan).toBeDefined();
+    assert(backendFetchSpan, 'backendFetchSpan should be defined');
+    assert(
+      backendFetchSpan.parentSpanId,
+      'backendFetchSpan.parentSpanId should be defined',
+    );
 
-    const customSpanId = Buffer.from(customSpan!.spanId).toString('hex');
-    const backendParentId = Buffer.from(
-      backendFetchSpan!.parentSpanId!,
-    ).toString('hex');
-
-    expect(backendParentId).toBe(customSpanId);
-
-    const customTraceId = Buffer.from(customSpan!.traceId).toString('hex');
-    const backendTraceId = Buffer.from(backendFetchSpan!.traceId).toString(
+    const routeSpanId = Buffer.from(routeSpan.spanId).toString('hex');
+    const customSpanId = Buffer.from(customSpan.spanId).toString('hex');
+    const customParentId = Buffer.from(customSpan.parentSpanId).toString('hex');
+    const backendParentId = Buffer.from(backendFetchSpan.parentSpanId).toString(
       'hex',
     );
 
-    expect(backendTraceId).toBe(customTraceId);
+    expect(customParentId).toBe(routeSpanId);
+    expect(backendParentId).toBe(customSpanId);
+
+    const routeTraceId = Buffer.from(routeSpan.traceId).toString('hex');
+    const customTraceId = Buffer.from(customSpan.traceId).toString('hex');
+    const backendTraceId = Buffer.from(backendFetchSpan.traceId).toString(
+      'hex',
+    );
+
+    expect(customTraceId).toBe(routeTraceId);
+    expect(backendTraceId).toBe(routeTraceId);
   });
 });
 

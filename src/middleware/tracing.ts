@@ -1,3 +1,4 @@
+import { _setEventContext } from '@fastly/compute-js-opentelemetry/sdk-trace-fastly';
 import type { ERequest, EResponse } from '@fastly/expressly';
 import {
   context,
@@ -62,25 +63,24 @@ export async function tracingMiddleware(req: ERequest, res: EResponse) {
   }
 
   const ctx = trace.setSpan(extractedContext, span);
+  _setEventContext(ctx);
 
-  return context.with(ctx, () => {
-    const originalSend = res.send.bind(res);
+  const originalSend = res.send.bind(res);
 
-    res.send = body => {
-      const statusCode = res.status || 200;
-      span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, statusCode);
+  res.send = body => {
+    const statusCode = res.status || 200;
+    span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, statusCode);
 
-      if (statusCode >= 500) {
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-        });
-        span.setAttribute(ATTR_ERROR_TYPE, String(statusCode));
-      }
+    if (statusCode >= 500) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+      });
+      span.setAttribute(ATTR_ERROR_TYPE, String(statusCode));
+    }
 
-      span.end();
-      return originalSend(body);
-    };
-  });
+    span.end();
+    return originalSend(body);
+  };
 }
 
 export async function errorMiddleware(
