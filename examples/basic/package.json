@@ -1,0 +1,19 @@
+{
+  "name": "expressly-otel-middleware-basic-example",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1028.0",
+    "@aws-sdk/lib-dynamodb": "^3.1028.0",
+    "@fastly/compute-js-opentelemetry": "^0.4.4",
+    "@fastly/expressly": "^2.4.0",
+    "@fastly/js-compute": "^3.41.1",
+    "@opentelemetry/api": "^1.9.0",
+    "expressly-otel-middleware": "workspace:*"
+  },
+  "scripts": {
+    "build": "js-compute-runtime src/index.ts bin/main.wasm --enable-experimental-top-level-await",
+    "start": "fastly compute serve",
+    "deploy": "fastly compute publish"
+  }
+}

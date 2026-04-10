@@ -1,3 +1,6 @@
-/node_modules
+node_modules
 /bin
 /pkg
+*.wasm
+.yarn/cache
+.yarn/install-state.gz

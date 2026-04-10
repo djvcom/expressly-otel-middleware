@@ -1,46 +1,116 @@
-# Default Starter Kit For TypeScript
+# expressly-otel-middleware
 
-[![Deploy to Fastly](https://deploy.edgecompute.app/button)](https://deploy.edgecompute.app/deploy)
+OpenTelemetry tracing and metrics middleware for [Fastly Compute](https://www.fastly.com/products/compute) applications using [`@fastly/expressly`](https://github.com/fastly/expressly).
 
-Get to know the Fastly Compute environment with a basic starter in TypeScript that demonstrates routing, simple synthetic responses and code comments that cover common patterns.
-
-**For more details about other starter kits for Compute, see the [Fastly Documentation Hub](https://www.fastly.com/documentation/solutions/starters)**
+Captures HTTP server spans with [OTel semantic conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/), propagates W3C trace context, instruments backend fetch calls, and records request duration metrics.
 
 ## Features
-* TypeScript source files
-* `tsconfig.json` file to use as a starting point
-* Allow only requests with particular HTTP methods
-* Match request URL path and methods for routing
-* Build synthetic responses at the edge
 
-## Understanding the code
+- HTTP server span per request with semantic convention attributes
+- W3C `traceparent` context propagation (incoming and outgoing)
+- Automatic `http.route` capture via `TracedRouter` (prevents span cardinality explosion)
+- Backend fetch instrumentation (including AWS SDK calls)
+- Request duration histogram and active request counter metrics
+- Configurable path exclusions, custom attributes, and sampling
+- Error middleware with exception recording and typed `error.type` attributes
 
-This starter kit is written in TypeScript and illustrates the same features as the [Compute JavaScript default starter kit](https://github.com/fastly/compute-starter-kit-typescript-default). It is intentionally lightweight, and requires no dependencies aside from the [`@fastly/js-compute`](https://www.npmjs.com/package/@fastly/js-compute) npm package. It will help you understand the basics of processing requests at the edge using Fastly. This starter includes implementations of common patterns explained in our [using Compute](https://www.fastly.com/documentation/guides/compute/javascript/) and [VCL migration](https://www.fastly.com/documentation/guides/compute/migrate/) guides. The starter doesn't require the use of any backends. Once deployed, you will have a Fastly service running on Compute that can generate synthetic responses at the edge.
+## Quick Start
 
-The Compute JavaScript SDK [has built-in support](https://www.fastly.com/documentation/guides/compute/developer-guides/javascript/#built-in-typescript) for executing TypeScript source files that contain only erasable TypeScript syntax. In this mode, type checking is not performed.
+```typescript
+import { allowDynamicBackends } from 'fastly:experimental';
+import {
+  createTracedRouter,
+  createTracingMiddleware,
+  createMetricsMiddleware,
+  createErrorMiddleware,
+  initTelemetry,
+} from 'expressly-otel-middleware';
 
-The SDK does not directly refer to the `tsconfig.json` file, but one is included to aid your IDE in coding support as well as to illustrate the recommended practice of running `tsc --noEmit` in a `prebuild` script to check for TypeScript errors, since the SDK does not perform type checking.
+await initTelemetry({
+  serviceName: 'my-edge-app',
+  collectorBackend: 'otlp-collector',
+});
 
-## Running the application
+allowDynamicBackends(true);
 
-To create an application using this starter kit, create a new directory for your application and switch to it, and then type the following command:
+const router = createTracedRouter();
 
-```shell
-npm create @fastly/compute@latest -- --language=typescript --default-starter-kit
+router.use(createTracingMiddleware());
+router.use(createMetricsMiddleware());
+
+router.get('/api/users/:id', async (req, res) => {
+  const user = await fetchUser(req.params.id);
+  return res.json(user);
+});
+
+router.use(createErrorMiddleware());
+router.listen();
 ```
 
-To build and run your new application in the local development environment, type the following command:
+## Configuration
+
+### `initTelemetry(config)`
+
+| Option | Type | Required | Description |
+|---|---|---|---|
+| `serviceName` | `string` | Yes | Service name in traces and metrics |
+| `collectorBackend` | `string` | Yes | Fastly backend name for the OTLP collector |
+| `sampler` | `Sampler` | No | OTel sampler (defaults to AlwaysOn) |
+| `resourceAttributes` | `Record<string, string>` | No | Additional resource attributes |
+| `instrumentations` | `unknown[]` | No | Additional OTel instrumentations |
+| `backendFetchAttributes` | `Function` | No | Callback to add attributes to backend fetch spans |
+| `metrics` | `MetricsConfig \| false` | No | Metrics configuration (omit to disable) |
+
+### `createTracingMiddleware(config?)`
+
+| Option | Type | Description |
+|---|---|---|
+| `ignorePaths` | `string[]` | Paths to exclude from tracing (e.g. `/health`) |
+| `additionalAttributes` | `Record<string, string \| number \| boolean>` | Static attributes added to every span |
+| `requestAttributes` | `(req: ERequest) => Record<...>` | Dynamic attributes extracted per request |
+
+## TracedRouter
+
+`createTracedRouter()` wraps `@fastly/expressly`'s `Router` to capture the matched route pattern (e.g. `/user/:id` rather than `/user/123`). This sets the `http.route` attribute and updates the span name, preventing cardinality explosion in trace backends.
+
+Use `createTracedRouter()` as a drop-in replacement for `new Router()` — the API is identical.
+
+## Metrics
+
+When `metrics` is provided to `initTelemetry`, the metrics middleware records:
+
+- `http.server.request.duration` — histogram in seconds
+- `http.server.active_requests` — up/down counter of in-flight requests
+
+Both include `http.request.method`, `http.response.status_code`, and `http.route` (when using `TracedRouter`) as attributes.
+
+## Compatibility
+
+- `@fastly/expressly` ^2.3.0
+- `@fastly/js-compute` ^3.33.2
+- `@fastly/compute-js-opentelemetry` ^0.4.3
+- `@opentelemetry/api` ^1.9.0
+
+## Local Development
 
 ```shell
-npm run start
+# Install dependencies
+yarn
+
+# Type check
+yarn typecheck
+
+# Lint
+yarn lint
+
+# Run tests
+yarn test
+
+# Run the example app locally
+cd examples/basic
+fastly compute serve
 ```
 
-To build and deploy your application to your Fastly account, type the following command. The first time you deploy the application, you will be prompted to create a new service in your account.
+## Licence
 
-```shell
-npm run deploy
-```
-
-## Security issues
-
-Please see our [SECURITY.md](SECURITY.md) for guidance on reporting security-related issues.
+[MIT](./LICENSE)
