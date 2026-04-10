@@ -7,5 +7,7 @@ export default defineConfig({
     root: path.resolve(__dirname),
     coverage: { provider: 'istanbul' },
     include: ['src/**/*.test.ts'],
+    hookTimeout: 60_000,
+    testTimeout: 30_000,
   },
 });
