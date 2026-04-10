@@ -1,9 +1,5 @@
 import { type ERequest, type EResponse, Router } from '@fastly/expressly';
 
-/**
- * Stores the matched route pattern for each request, keyed by request object.
- * Read by the tracing middleware to set the http.route attribute.
- */
 export const routePatterns = new WeakMap<ERequest, string>();
 
 type HandlerFn = (req: ERequest, res: EResponse) => Promise<unknown>;
@@ -29,6 +25,11 @@ function wrapCallback(pattern: string, callback: HandlerFn): HandlerFn {
   };
 }
 
+/**
+ * Drop-in replacement for `new Router()` that captures matched route patterns.
+ * The tracing middleware reads these to set `http.route` and update span names,
+ * preventing cardinality explosion from high-cardinality URL paths.
+ */
 export function createTracedRouter(
   config?: ConstructorParameters<typeof Router>[0],
 ): Router {

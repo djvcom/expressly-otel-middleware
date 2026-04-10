@@ -2,10 +2,10 @@ import { _setEventContext } from '@fastly/compute-js-opentelemetry/sdk-trace-fas
 import type { ERequest, EResponse } from '@fastly/expressly';
 import {
   context,
-  defaultTextMapGetter,
   propagation,
   SpanKind,
   SpanStatusCode,
+  type TextMapGetter,
   trace,
 } from '@opentelemetry/api';
 import {
@@ -25,6 +25,16 @@ import type { TracingMiddlewareConfig } from '../types.js';
 
 const tracer = trace.getTracer('expressly-otel-middleware');
 
+const headersGetter: TextMapGetter<Headers> = {
+  keys: headers => [...headers.keys()],
+  get: (headers, key) => headers.get(key) ?? undefined,
+};
+
+/**
+ * Creates Expressly middleware that starts an OTel SERVER span per request.
+ * Captures HTTP semantic convention attributes, propagates W3C trace context,
+ * and records response status on the `finish` event.
+ */
 export function createTracingMiddleware(config?: TracingMiddlewareConfig) {
   return async function tracingMiddleware(req: ERequest, res: EResponse) {
     const url = new URL(req.url);
@@ -36,8 +46,8 @@ export function createTracingMiddleware(config?: TracingMiddlewareConfig) {
 
     const extractedContext = propagation.extract(
       context.active(),
-      Object.fromEntries(req.headers),
-      defaultTextMapGetter,
+      req.headers,
+      headersGetter,
     );
 
     const span = tracer.startSpan(
@@ -93,6 +103,10 @@ export function createTracingMiddleware(config?: TracingMiddlewareConfig) {
   };
 }
 
+/**
+ * Creates Expressly error middleware that records exceptions on the active span
+ * and returns a 500 response.
+ */
 export function createErrorMiddleware() {
   return async function errorMiddleware(
     err: Error,
@@ -108,10 +122,7 @@ export function createErrorMiddleware() {
         message: err.message,
       });
       span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, 500);
-
-      const errorType =
-        err.constructor.name !== 'Error' ? err.constructor.name : '500';
-      span.setAttribute(ATTR_ERROR_TYPE, errorType);
+      span.setAttribute(ATTR_ERROR_TYPE, err.constructor.name);
     }
 
     res.withStatus(500).send(`Error: ${err.message}`);

@@ -6,34 +6,18 @@ import { Resource } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import type { TelemetryConfig } from './types.js';
 
+/**
+ * Initialise the OTel SDK for a Fastly Compute application.
+ * Call once at the top of your entry point, before registering any routes.
+ */
 export async function initTelemetry(config: TelemetryConfig): Promise<void> {
-  const resourceAttributes: Record<string, string> = {
-    [ATTR_SERVICE_NAME]: config.serviceName,
-    ...config.resourceAttributes,
-  };
-
   const backendFetchInstrumentation = new FastlyBackendFetchInstrumentation(
     config.backendFetchAttributes
       ? { applyCustomAttributesOnSpan: config.backendFetchAttributes }
       : undefined,
   );
 
-  const sdkConfig: Record<string, unknown> = {
-    traceExporter: new OTLPTraceExporter({
-      backend: config.collectorBackend,
-    }),
-    instrumentations: [
-      backendFetchInstrumentation,
-      ...(config.instrumentations ?? []),
-    ],
-    resource: new Resource(resourceAttributes),
-    textMapPropagator: new W3CTraceContextPropagator(),
-  };
-
-  if (config.sampler) {
-    sdkConfig.sampler = config.sampler;
-  }
-
+  let metricReader: object | undefined;
   if (config.metrics) {
     const { OTLPMetricExporter } = await import(
       '@fastly/compute-js-opentelemetry/exporter-metrics-otlp-fastly-backend'
@@ -41,15 +25,27 @@ export async function initTelemetry(config: TelemetryConfig): Promise<void> {
     const { FastlyMetricReader } = await import(
       '@fastly/compute-js-opentelemetry/sdk-metrics-fastly'
     );
-    sdkConfig.metricReader = new FastlyMetricReader({
+    metricReader = new FastlyMetricReader({
       exporter: new OTLPMetricExporter({
         backend: config.metrics.collectorBackend ?? config.collectorBackend,
       }),
     });
   }
 
-  const sdk = new FastlySDK(
-    sdkConfig as ConstructorParameters<typeof FastlySDK>[0],
-  );
+  const sdk = new FastlySDK({
+    traceExporter: new OTLPTraceExporter({ backend: config.collectorBackend }),
+    instrumentations: [
+      backendFetchInstrumentation,
+      ...(config.instrumentations ?? []),
+    ],
+    resource: new Resource({
+      [ATTR_SERVICE_NAME]: config.serviceName,
+      ...config.resourceAttributes,
+    }),
+    textMapPropagator: new W3CTraceContextPropagator(),
+    ...(config.sampler ? { sampler: config.sampler } : {}),
+    ...(metricReader ? { metricReader } : {}),
+  } as ConstructorParameters<typeof FastlySDK>[0]);
+
   await sdk.start();
 }

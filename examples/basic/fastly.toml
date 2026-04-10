@@ -1,7 +1,7 @@
 # This file describes a Fastly Compute package. To learn more visit:
 # https://www.fastly.com/documentation/reference/compute/fastly-toml
 
-authors = [""]
+authors = ["Daniel Verrall"]
 description = "Example Fastly Compute application using expressly-otel-middleware"
 language = "javascript"
 manifest_version = 3

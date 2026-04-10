@@ -275,7 +275,7 @@ describe('Tracing Middleware', () => {
     const allSpans = getAllSpans(receivedTraces);
     const span = findSpan(allSpans, 'GET /user/:id');
 
-    expect(span.status.code).not.toBe(2);
+    expect(span.status.code).toBe(0);
   });
 
   it('should handle errors and return 500', async () => {
@@ -428,6 +428,6 @@ describe('DynamoDB Integration', () => {
     const allSpans = getAllSpans(receivedTraces);
     const backendFetchSpans = allSpans.filter(s => s.name === 'Backend Fetch');
 
-    expect(backendFetchSpans.length).toBeGreaterThan(0);
+    expect(backendFetchSpans.length).toBeGreaterThanOrEqual(2);
   });
 });

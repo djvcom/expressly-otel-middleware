@@ -17,19 +17,15 @@ Captures HTTP server spans with [OTel semantic conventions](https://opentelemetr
 ## Quick Start
 
 ```typescript
+import './telemetry.js'; // must be imported first — see initTelemetry below
+
 import { allowDynamicBackends } from 'fastly:experimental';
 import {
   createTracedRouter,
   createTracingMiddleware,
   createMetricsMiddleware,
   createErrorMiddleware,
-  initTelemetry,
 } from 'expressly-otel-middleware';
-
-await initTelemetry({
-  serviceName: 'my-edge-app',
-  collectorBackend: 'otlp-collector',
-});
 
 allowDynamicBackends(true);
 
@@ -47,6 +43,17 @@ router.use(createErrorMiddleware());
 router.listen();
 ```
 
+Where `telemetry.ts` sets up the SDK:
+
+```typescript
+import { initTelemetry } from 'expressly-otel-middleware';
+
+await initTelemetry({
+  serviceName: 'my-edge-app',
+  collectorBackend: 'otlp-collector',
+});
+```
+
 ## Configuration
 
 ### `initTelemetry(config)`
@@ -55,19 +62,19 @@ router.listen();
 |---|---|---|---|
 | `serviceName` | `string` | Yes | Service name in traces and metrics |
 | `collectorBackend` | `string` | Yes | Fastly backend name for the OTLP collector |
-| `sampler` | `Sampler` | No | OTel sampler (defaults to AlwaysOn) |
-| `resourceAttributes` | `Record<string, string>` | No | Additional resource attributes |
-| `instrumentations` | `unknown[]` | No | Additional OTel instrumentations |
+| `sampler` | `Sampler` | No | Trace sampler (Fastly SDK defaults to AlwaysOn) |
+| `resourceAttributes` | `Record<string, string>` | No | Extra resource attributes |
+| `instrumentations` | `object[]` | No | Extra OTel instrumentations |
 | `backendFetchAttributes` | `Function` | No | Callback to add attributes to backend fetch spans |
-| `metrics` | `MetricsConfig \| false` | No | Metrics configuration (omit to disable) |
+| `metrics` | `MetricsConfig` | No | Metrics config (omit to disable) |
 
 ### `createTracingMiddleware(config?)`
 
 | Option | Type | Description |
 |---|---|---|
-| `ignorePaths` | `string[]` | Paths to exclude from tracing (e.g. `/health`) |
-| `additionalAttributes` | `Record<string, string \| number \| boolean>` | Static attributes added to every span |
-| `requestAttributes` | `(req: ERequest) => Record<...>` | Dynamic attributes extracted per request |
+| `ignorePaths` | `string[]` | Paths to skip tracing for (e.g. `/health`) |
+| `additionalAttributes` | `SpanAttributes` | Static attributes added to every span |
+| `requestAttributes` | `(req: ERequest) => SpanAttributes` | Dynamic attributes extracted per request |
 
 ## TracedRouter
 
@@ -86,9 +93,9 @@ Both include `http.request.method`, `http.response.status_code`, and `http.route
 
 ## Compatibility
 
-- `@fastly/expressly` ^2.3.0
-- `@fastly/js-compute` ^3.33.2
-- `@fastly/compute-js-opentelemetry` ^0.4.3
+- `@fastly/expressly` ^2.4.0
+- `@fastly/js-compute` ^3.41.1
+- `@fastly/compute-js-opentelemetry` ^0.4.4
 - `@opentelemetry/api` ^1.9.0
 
 ## Local Development
